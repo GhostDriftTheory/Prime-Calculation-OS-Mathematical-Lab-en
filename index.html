@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Prime Calculation OS Math Lab: Λ(n) & Safety Zone δ_pos</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel (for JSX) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+      body {
+        font-family: 'Helvetica Neue', Arial, sans-serif;
+      }
+      /* Math font styles */
+      .math-font {
+        font-family: 'Times New Roman', Times, serif;
+        font-style: italic;
+      }
+      .math-symbol {
+        font-family: 'Times New Roman', Times, serif;
+      }
+      /* Custom scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #f1f5f9; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8; 
+      }
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-800 font-sans antialiased selection:bg-emerald-500/30">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useMemo } = React;
+
+      // ===== Utilities =====
+
+      function isPrime(n) {
+        if (n < 2) return false;
+        if (n === 2) return true;
+        if (n % 2 === 0) return false;
+        const limit = Math.floor(Math.sqrt(n));
+        for (let i = 3; i <= limit; i += 2) {
+          if (n % i === 0) return false;
+        }
+        return true;
+      }
+
+      function generateInterval(start, length) {
+        const s = Math.max(2, start);
+        const len = Math.max(10, Math.min(length, 600)); // Limit load
+        const arr = [];
+        for (let i = 0; i < len; i++) {
+          arr.push(s + i);
+        }
+        return arr;
+      }
+
+      function computeWeights(nums) {
+        // Simplified Λ(n): log p if prime, else 0
+        return nums.map((n) => (isPrime(n) ? Math.log(n) : 0));
+      }
+
+      function movingAverage(values, radius) {
+        const n = values.length;
+        if (n === 0) return [];
+        const r = Math.max(1, radius);
+        const out = new Array(n).fill(0);
+        for (let i = 0; i < n; i++) {
+          let sum = 0;
+          let cnt = 0;
+          for (let j = i - r; j <= i + r; j++) {
+            if (j >= 0 && j < n) {
+              sum += values[j];
+              cnt++;
+            }
+          }
+          out[i] = cnt > 0 ? sum / cnt : 0;
+        }
+        return out;
+      }
+
+      function normalize(values) {
+        if (!values.length) return [];
+        let min = Infinity;
+        let max = -Infinity;
+        for (const v of values) {
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+        if (max === min) {
+          return values.map(() => 0.5);
+        }
+        return values.map((v) => (v - min) / (max - min));
+      }
+
+      // SVG Polyline Generator
+      function makePolylinePoints(values, width, height) {
+        const n = values.length;
+        if (n === 0) return "";
+        if (n === 1) {
+          const x = width / 2;
+          const y = height * (1 - values[0]);
+          return `${x},${y}`;
+        }
+        const stepX = width / (n - 1);
+        return values
+          .map((v, i) => {
+            const x = stepX * i;
+            const y = height * (1 - v); // Higher value is higher (y is smaller)
+            return `${x},${y}`;
+          })
+          .join(" ");
+      }
+
+      // ===== Components =====
+
+      // ExpertToggle: Dark card design for professional feel
+      function ExpertToggle({ title, children }) {
+        const [open, setOpen] = useState(false);
+        return (
+          <div className="mt-4 border border-slate-700/50 rounded-lg bg-slate-900 overflow-hidden shadow-md">
+            <button
+              className="w-full flex items-center justify-between px-3 py-2.5 text-emerald-400 hover:bg-slate-800 transition-colors gap-3"
+              onClick={() => setOpen((o) => !o)}
+            >
+              <span className="font-mono tracking-tight text-[11px] md:text-sm font-semibold text-left truncate flex-1">
+                {title}
+              </span>
+              <span className="text-[9px] md:text-[10px] opacity-70 text-slate-400 whitespace-nowrap flex-shrink-0 border border-slate-700 px-2 py-0.5 rounded bg-slate-800/50">
+                {open ? "▲ CLOSE" : "▼ MEMO"}
+              </span>
+            </button>
+            {open && (
+              <div className="px-4 py-4 text-xs md:text-sm text-slate-300 whitespace-pre-wrap border-t border-slate-800 bg-slate-950/50 leading-relaxed font-sans">
+                {children}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function BarChart({ numbers, weights, height = 140 }) {
+        const maxW = Math.max(1, ...weights);
+        return (
+          <div className="overflow-x-auto pb-2">
+            <div className="flex items-end gap-[2px] min-w-[260px] px-2 py-3 border border-slate-800 rounded-xl bg-slate-900/40">
+              {numbers.map((n, idx) => {
+                const w = weights[idx];
+                const h = (w / maxW) * height;
+                const isP = w > 0;
+                return (
+                  <div key={n} className="flex flex-col items-center group relative">
+                    <div
+                      className={`w-[6px] rounded-t transition-all duration-300 ${
+                        isP ? "bg-emerald-500 group-hover:bg-emerald-400" : "bg-slate-700 group-hover:bg-slate-600"
+                      }`}
+                      style={{ height: `${Math.max(2, h)}px` }}
+                    />
+                    {/* Tooltip */}
+                     <div className="opacity-0 group-hover:opacity-100 absolute bottom-full mb-1 bg-slate-800 text-white text-[10px] px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10 border border-slate-600 shadow-xl font-mono">
+                        {n} : {isP ? `Prime (log p ≈ ${w.toFixed(2)})` : "Composite"}
+                     </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+
+      function LineChart({ values, height = 160 }) {
+        const width = 420;
+        const normalized = normalize(values);
+        const points = makePolylinePoints(normalized, width, height);
+        return (
+          <div className="overflow-x-auto pb-2">
+            <div className="min-w-[420px]">
+                <svg
+                width="100%"
+                viewBox={`0 0 ${width} ${height}`}
+                className="border border-slate-800 rounded-xl bg-slate-900/40 block"
+                >
+                {/* Guide line */}
+                <line
+                    x1="0"
+                    y1={height * 0.75}
+                    x2={width}
+                    y2={height * 0.75}
+                    className="stroke-slate-700"
+                    strokeDasharray="4 4"
+                />
+                <polyline
+                    points={points}
+                    fill="none"
+                    className="stroke-emerald-400"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+                </svg>
+            </div>
+          </div>
+        );
+      }
+
+      function DeltaChart({ Zmin }) {
+        if (!Number.isFinite(Zmin)) return null;
+        if (Zmin <= 0) {
+          return (
+            <div className="mt-3 p-3 rounded-lg bg-rose-950/20 border border-rose-900/30 text-sm text-rose-300 flex items-start gap-2">
+              <span className="text-lg">⚠️</span>
+              <div>
+                In this interval, the minimal terrain height (Z_min) is below zero.
+                Thus, the demo δ_pos is not positive.
+                <br/>
+                (Try selecting a denser interval.)
+              </div>
+            </div>
+          );
+        }
+
+        const beta = 1.0;
+        const mainTerm = beta * Zmin;
+        const errorTerm = 0.6 * Zmin;
+        const delta = mainTerm - errorTerm; // = 0.4 Zmin > 0
+
+        const max = mainTerm;
+        const mainH = (mainTerm / max) * 120;
+        const errH = (errorTerm / max) * 120;
+        const dH = (delta / max) * 120;
+
+        return (
+          <div className="mt-4 p-4 rounded-xl bg-slate-800/40 border border-slate-700/40">
+            <div className="text-sm text-slate-300 mb-4">
+              Visualizing the inequality relationship:
+              <span className="text-emerald-300 font-mono font-medium mx-2 bg-slate-900/80 px-2 py-1 rounded text-xs whitespace-nowrap">
+                 δ_demo = main − error 
+              </span>
+            </div>
+            <div className="flex items-end gap-6 justify-center md:justify-start">
+              <div className="flex flex-col items-center">
+                <div className="relative group">
+                    <div
+                    className="w-12 bg-emerald-500 rounded-t transition-all duration-500 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                    style={{ height: `${mainH}px` }}
+                    ></div>
+                </div>
+                <span className="mt-2 text-xs font-mono text-slate-400">main</span>
+                <span className="text-[10px] text-slate-500">β·Z_min</span>
+              </div>
+
+              <div className="text-slate-500 font-bold mb-8">-</div>
+
+              <div className="flex flex-col items-center">
+                <div
+                  className="w-12 bg-amber-500 rounded-t transition-all duration-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]"
+                  style={{ height: `${errH}px` }}
+                ></div>
+                <span className="mt-2 text-xs font-mono text-slate-400">error</span>
+                <span className="text-[10px] text-slate-500">Noise</span>
+              </div>
+
+              <div className="text-slate-500 font-bold mb-8">=</div>
+
+              <div className="flex flex-col items-center">
+                <div
+                  className="w-12 bg-sky-500 rounded-t transition-all duration-500 relative overflow-hidden shadow-[0_0_10px_rgba(14,165,233,0.3)]"
+                  style={{ height: `${dH}px` }}
+                >
+                    <div className="absolute inset-0 bg-gradient-to-t from-sky-400 to-sky-500"></div>
+                </div>
+                <span className="mt-2 text-xs font-mono text-sky-400 font-bold">δ_demo</span>
+                <span className="text-[10px] text-sky-500/80">Safe Zone</span>
+              </div>
+            </div>
+            
+            <div className="mt-4 pt-3 border-t border-slate-700/30 text-xs text-emerald-200/80 flex gap-2 items-center">
+               <div className="w-4 h-4 rounded-full border border-emerald-500/50 flex items-center justify-center text-[10px] text-emerald-500">✓</div>
+               <span>
+                  <span className="math-font">main − error &gt; 0</span> holds. The valley is above zero, visualizing the
+                  <span className="font-medium font-mono"> δ_pos &gt; 0 </span>
+                  safety condition.
+               </span>
+            </div>
+          </div>
+        );
+      }
+
+      function QuantumChart({ Zvalues }) {
+        if (!Zvalues.length) return null;
+        const [energy, setEnergy] = useState(0.5);
+        const width = 420;
+        const height = 180;
+        const norm = normalize(Zvalues);
+        const points = makePolylinePoints(norm, width, height);
+        const energyY = height * (1 - energy);
+
+        return (
+          <div className="mt-4">
+            <div className="text-sm mb-2 flex justify-between items-center text-slate-300">
+              <span>Particle Energy <span className="font-mono text-emerald-300">E</span>:</span>
+              <span className="text-xs text-emerald-400 font-mono">{energy.toFixed(2)}</span>
+            </div>
+            <input
+              type="range"
+              min="0.1"
+              max="0.9"
+              step="0.05"
+              value={energy}
+              onChange={(e) => setEnergy(parseFloat(e.target.value))}
+              className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500/80"
+            />
+            <div className="flex justify-between text-[10px] text-slate-500 mb-4 mt-1 px-1 font-mono">
+              <span>Low Energy</span>
+              <span>High Energy</span>
+            </div>
+            <div className="overflow-x-auto pb-2">
+              <div className="min-w-[420px]">
+                <svg
+                    width="100%"
+                    viewBox={`0 0 ${width} ${height}`}
+                    className="border border-slate-800 rounded-xl bg-slate-900/40 block"
+                >
+                    {/* Potential V(x) ≈ Z(u) */}
+                    <polyline
+                    points={points}
+                    fill="none"
+                    className="stroke-violet-400/80"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    />
+                    {/* Energy Line */}
+                    <line
+                    x1="0"
+                    y1={energyY}
+                    x2={width}
+                    y2={energyY}
+                    className="stroke-emerald-500/60"
+                    strokeDasharray="4 4"
+                    strokeWidth="1"
+                    />
+                    {/* Particle */}
+                    <circle
+                    cx={width / 2}
+                    cy={energyY}
+                    r="4"
+                    className="fill-emerald-300"
+                    />
+                    
+                    <text x="10" y="20" fill="#a78bfa" fontSize="10" fontFamily="monospace" opacity="0.8">V(x)</text>
+                    <text x="10" y={energyY - 5} fill="#34d399" fontSize="10" fontFamily="monospace" opacity="0.8">E</text>
+                </svg>
+              </div>
+            </div>
+            <div className="mt-2 text-xs text-slate-400 bg-slate-900/30 p-3 rounded-lg border border-slate-800">
+              Purple curve: Potential <span className="math-font text-violet-400">V(x)</span>. Green line: Energy <span className="math-font text-emerald-400">E</span>.
+              Visualizing particle behavior (confinement/tunneling) within potential barriers.
+            </div>
+          </div>
+        );
+      }
+
+      function App() {
+        const [start, setStart] = useState(10000);
+        const [length, setLength] = useState(200);
+        const [smoothRadius, setSmoothRadius] = useState(15);
+
+        const nums = useMemo(
+          () => generateInterval(Number(start) || 0, Number(length) || 0),
+          [start, length]
+        );
+        const weights = useMemo(() => computeWeights(nums), [nums]);
+        const Z = useMemo(
+          () => movingAverage(weights, smoothRadius),
+          [weights, smoothRadius]
+        );
+        const Zmin = useMemo(
+          () => (Z.length ? Math.min(...Z) : NaN),
+          [Z]
+        );
+
+        return (
+          <div className="min-h-screen pb-20 bg-slate-50 text-slate-800">
+            {/* Header: Light Theme */}
+            <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur-md shadow-sm">
+              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-emerald-500 text-white flex items-center justify-center shadow-md">
+                    <span className="text-sm font-bold font-mono">PG</span>
+                  </div>
+                  <div>
+                    <h1 className="text-sm md:text-base font-bold text-slate-800 tracking-tight">
+                      Prime Calculation OS Math Lab
+                    </h1>
+                    <p className="text-[10px] text-slate-500 font-mono tracking-wide">
+                      Laboratory for Λ(n) and Safety Zone δ_pos
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            {/* Main Content */}
+            <main className="max-w-5xl mx-auto px-4 mt-8 space-y-10">
+              
+              {/* Block 1: Overview */}
+              <section className="bg-white border border-slate-200 rounded-xl p-6 md:p-8 shadow-sm">
+                <div className="inline-flex items-center gap-2 px-2 py-1 rounded text-emerald-600 text-xs font-mono mb-4 border border-emerald-100 bg-emerald-50">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                  Prime Calculation OS Mathematical Model
+                </div>
+                <h2 className="text-xl md:text-2xl font-bold mb-4 text-slate-800">
+                  Math Lab: Λ(n) & Safety Zone δ_pos
+                </h2>
+
+                {/* Unconditional Guarantee Badge */}
+                <div className="mb-6 p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-800 text-xs md:text-sm font-medium flex items-start gap-2">
+                  <svg className="w-5 h-5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <span className="leading-relaxed pt-0.5">
+                    This OS requires absolutely NO unproven assumptions (such as RH, GRH, or zero-density hypotheses).
+                  </span>
+                </div>
+
+                <p className="text-sm md:text-base text-slate-600 leading-relaxed mb-6 max-w-3xl">
+                  This lab visualizes the structure of the 
+                  <span className="text-emerald-600 font-bold mx-1 whitespace-nowrap">
+                  finite window convolution Z(u)
+                  </span>
+                  <span className="text-slate-500 text-xs mx-1 whitespace-nowrap">(Local Prime Density)</span>
+                  derived from Λ(n), and its lower bound evaluation
+                  <span className="math-font mx-1">δ<sub>pos</sub></span>
+                  <span className="text-slate-500 text-xs mx-1 whitespace-nowrap">(Safety Margin)</span>.
+                </p>
+                
+                <p className="text-sm md:text-base text-slate-600 leading-relaxed mb-6 max-w-3xl">
+                  {'We construct a field by assigning weight'}<span className="math-font mx-1">log p</span>{'to primes, and smooth it to create the landscape'}<span className="math-font mx-1">Z(u)</span>.{' By verifying that this landscape never drops below zero ('}<span className="math-font mx-1">δ<sub>pos</sub> &gt; 0</span>{'), the OS determines the range it can answer with confidence.'}
+                  <br/>
+                  <span className="text-xs text-slate-400 mt-2 block">
+                    * We affectionately call this model "Prime Gravity".
+                  </span>
+                </p>
+
+                {/* Guide */}
+                <p className="text-xs md:text-sm text-slate-500 mb-3 font-bold">
+                  Overview of the OS mechanics in 4 steps:
+                </p>
+
+                {/* Improved STEP Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono text-slate-500">
+                  <div className="px-3 py-3 rounded bg-slate-50 border border-slate-100 flex flex-col gap-1">
+                    <span className="text-emerald-600 font-bold">STEP 01</span>
+                    <span className="text-[11px] text-slate-700 font-sans leading-tight">Determine "weights" for integers</span>
+                    <span className="text-[10px] text-slate-400 mt-1">Weight Field Λ(n)</span>
+                  </div>
+                  <div className="px-3 py-3 rounded bg-slate-50 border border-slate-100 flex flex-col gap-1">
+                    <span className="text-emerald-600 font-bold">STEP 02</span>
+                    <span className="text-[11px] text-slate-700 font-sans leading-tight">Smooth out to draw terrain Z(u)</span>
+                    <span className="text-[10px] text-slate-400 mt-1">Landscape Z(u)</span>
+                  </div>
+                  <div className="px-3 py-3 rounded bg-slate-50 border border-slate-100 flex flex-col gap-1">
+                    <span className="text-emerald-600 font-bold">STEP 03</span>
+                    <span className="text-[11px] text-slate-700 font-sans leading-tight">Check if valley stays above 0 (Safe?)</span>
+                    <span className="text-[10px] text-slate-400 mt-1">Safety (δ_pos &gt; 0)</span>
+                  </div>
+                  <div className="px-3 py-3 rounded bg-slate-50 border border-slate-100 flex flex-col gap-1">
+                    <span className="text-violet-500 font-bold">STEP 04</span>
+                    <span className="text-[11px] text-slate-700 font-sans leading-tight">View terrain as quantum potential</span>
+                    <span className="text-[10px] text-slate-400 mt-1">Optional: Quantum View</span>
+                  </div>
+                </div>
+              </section>
+
+              {/* Block 2: Parameters */}
+              <section className="bg-white border border-slate-200 rounded-xl p-6 md:p-8 shadow-sm">
+                <h2 className="text-base font-semibold mb-4 flex items-center gap-2 text-slate-800">
+                    <span className="w-0.5 h-4 bg-emerald-500 rounded-full"></span>
+                    Parameter Settings
+                </h2>
+                <div className="bg-slate-50 rounded-lg p-5 border border-slate-100">
+                    <div className="text-xs text-slate-600 mb-6 leading-relaxed bg-white p-3 rounded border border-slate-200">
+                      <span className="font-bold text-slate-700">1. Select Interval → 2. Weights Change → 3. Terrain & Safety (δ_demo) Change</span>
+                      <br/>
+                      These three knobs correspond to the core proof parameters in the OS: "which interval", "window size", and "smoothing strength" to check <span className="math-font">δ<sub>pos</sub> &gt; 0</span>.
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Start Integer
+                        </label>
+                        <div className="text-[10px] text-slate-500 mb-2 whitespace-nowrap">Observation Point (center u)</div>
+                        <input
+                        type="number"
+                        value={start}
+                        onChange={(e) => setStart(parseInt(e.target.value || "0", 10))}
+                        className="w-full px-3 py-2 rounded bg-white border border-slate-300 text-slate-800 text-sm focus:border-emerald-500 outline-none transition-colors font-mono shadow-sm"
+                        placeholder="e.g. 10000"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Interval Width
+                        </label>
+                        <div className="text-[10px] text-slate-500 mb-2 whitespace-nowrap">Window Width (integration range X₀)</div>
+                        <input
+                        type="number"
+                        value={length}
+                        onChange={(e) => setLength(parseInt(e.target.value || "0", 10))}
+                        className="w-full px-3 py-2 rounded bg-white border border-slate-300 text-slate-800 text-sm focus:border-emerald-500 outline-none transition-colors font-mono shadow-sm"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Smoothing Radius
+                        </label>
+                        <div className="text-[10px] text-slate-500 mb-2 whitespace-nowrap">Smoothing Strength (Resolution vs Stability)</div>
+                        <input
+                        type="range"
+                        min="3"
+                        max="40"
+                        value={smoothRadius}
+                        onChange={(e) => setSmoothRadius(parseInt(e.target.value, 10))}
+                        className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500 mt-2"
+                        />
+                        <div className="text-right text-[10px] font-mono text-emerald-600 mt-1">
+                           Radius: ±{smoothRadius}
+                        </div>
+                    </div>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-4 text-right">
+                    * Parameters are limited for browser demo performance.
+                    </p>
+                </div>
+              </section>
+
+              {/* Block 3: STEP 1 */}
+              <section className="bg-white border border-slate-200 rounded-xl p-6 md:p-8 shadow-sm">
+                <h2 className="text-base font-semibold mb-2 text-slate-800 font-mono flex items-center gap-2">
+                  <span className="text-emerald-500 font-bold">01</span> Weight Field
+                </h2>
+                <p className="text-sm text-slate-600 mb-6">
+                   Place a "weight" pillar of <span className="math-font text-emerald-600 font-bold">log p</span> at each prime position.
+                   This distribution is the starting point of the terrain formation.
+                </p>
+                
+                {/* Monitor Area (Black) */}
+                <div className="bg-slate-950 rounded-xl p-4 md:p-6 border border-slate-800 shadow-inner">
+                   <BarChart numbers={nums} weights={weights} />
+                </div>
+
+                <ExpertToggle title="Expert Note: von Mangoldt Function Λ(n)">
+                  <span className="math-font">Λ(n) = log p</span> (if <span className="math-font">n = p^k</span>), else 0.
+                  <br />
+                  <br />
+                  In this demo, we use a simplified version displaying <span className="math-font">log n</span> only when <span className="text-emerald-200">n = p</span> (ignoring prime powers <span className="math-font">p^k</span>).
+                  <br />
+                  The actual Prime Calculation OS implementation uses the complete <span className="math-font">Λ(n)</span>, convolving it with a finite window to construct <span className="math-font">Z(u)</span>, and evaluates <span className="math-font">δ<sub>pos</sub> &gt; 0</span> within a finite closure.
+                </ExpertToggle>
+              </section>
+
+              {/* Block 4: STEP 2 & 3 */}
+              <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-white border border-slate-200 rounded-xl p-6 md:p-8 shadow-sm">
+                    <h2 className="text-base font-semibold mb-2 text-slate-800 font-mono flex items-center gap-2">
+                        <span className="text-emerald-500 font-bold">02</span> Landscape Z(u)
+                    </h2>
+                    <p className="text-sm text-slate-600 mb-6">
+                        By averaging neighboring weights, a continuous terrain <span className="math-font text-emerald-600 font-bold">Z(u)</span> emerges.
+                    </p>
+                    
+                    {/* Monitor Area (Black) */}
+                    <div className="bg-slate-950 rounded-xl p-4 md:p-6 border border-slate-800 shadow-inner">
+                        <LineChart values={Z} />
+                    </div>
+                    
+                    <ExpertToggle title="Expert Note: Z(u) and -ζ'/ζ">
+                        Analytically, <span className="math-font">Z(u)</span> is formulated as a finite window smoothed version of <span className="math-font">-ζ'/ζ(1/2 + iu)</span>.
+                        <br />
+                        <br />
+                        This demo approximates <span className="math-font">Z(u)</span> by applying a simple moving average filter to the finite sequence of <span className="math-font">Λ(n)</span>.
+                        <br />
+                        <br />
+                        The theoretical core constructs the convolution <span className="math-font">Z<sub>K</sub>(u) = (Λ * K)(u)</span> using a Fejér–Yukawa type kernel <span className="math-font">K</span>.
+                    </ExpertToggle>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-xl p-6 md:p-8 shadow-sm">
+                    <h2 className="text-base font-semibold mb-2 text-slate-800 font-mono flex items-center gap-2">
+                        <span className="text-emerald-500 font-bold">03</span> Safety Margin
+                    </h2>
+                    <p className="text-sm text-slate-600 mb-4">
+                        If the terrain's lowest point <span className="math-font font-bold text-slate-700">Z<sub>min</sub></span> is superior to the noise terms, the system is in a stable zone.
+                    </p>
+
+                    {/* Monitor Area (Black) */}
+                    <div className="bg-slate-950 rounded-xl p-4 md:p-6 border border-slate-800 shadow-inner">
+                        <DeltaChart Zmin={Zmin} />
+                    </div>
+
+                    <ExpertToggle title="Expert Note: δ_pos Inequality">
+                        The theoretical part of this project designs a lower bound evaluation for <span className="math-font">δ<sub>pos</sub></span> without using unproven assumptions (like RH/GRH).
+                        <br />
+                        <br />
+                        This demo is a <span className="text-emerald-200">toy model to illustrate the structure</span>.
+                        <br />
+                        <br />
+                        The actual evaluation formula in the analysis layer is:
+                        <br />
+                        <span className="math-font">β · Z<sub>min</sub> &gt; c<sub>WG</sub> + c<sub>zero_fin</sub> + c<sub>zero_tail</sub>(T₀) + c<sub>tail</sub>(X₀) + c<sub>win</sub>(W, R)</span>
+                        <br />
+                        <br />
+                        These are processed using interval arithmetic with outward rounding (Σ₁ inequality) to prove <span className="math-font">main − error &gt; 0</span>.
+                    </ExpertToggle>
+                  </div>
+              </section>
+
+              {/* Block 5: Quantum Mode */}
+              <section className="bg-white border border-slate-200 rounded-xl p-6 md:p-8 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-violet-100/50 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
+                
+                <h2 className="text-base font-semibold mb-2 text-slate-800 font-mono flex items-center gap-2">
+                   <span className="text-violet-500 font-bold">04</span> Optional : Quantum View
+                </h2>
+                <p className="text-sm text-slate-600 mb-6">
+                  Reinterpret the same terrain as a physical potential <span className="math-font">V(x)</span>.
+                  Explore quantum behaviors (confinement, tunneling) within the field formed by prime distribution.
+                </p>
+
+                {/* Monitor Area (Black) */}
+                <div className="bg-slate-950 rounded-xl p-4 md:p-6 border border-slate-800 shadow-inner">
+                    <QuantumChart Zvalues={Z} />
+                </div>
+
+                <ExpertToggle title="Expert Note: Schrödinger Operator Correspondence">
+                  This section is an informal sketch of correspondence and is independent of the OS's safety proof.
+                  <br />
+                  <br />
+                  The approach of viewing <span className="math-font">V(x)</span> as a potential derived from Zeta functions in the 1D Schrödinger equation
+                  <br />
+                  &nbsp;&nbsp;<span className="math-font">(-d²/dx² + V(x)) ψ(x) = E ψ(x)</span>
+                  <br />
+                  is inspired by the spectral interpretation of Riemann zeros (e.g., Berry-Keating).
+                </ExpertToggle>
+              </section>
+
+              {/* Block 6: Conclusion */}
+              <section className="bg-white border border-slate-200 rounded-xl p-8 text-center shadow-sm">
+                <h2 className="text-lg font-semibold mb-4 text-slate-800 tracking-wide font-mono text-left">
+                  Conclusion
+                </h2>
+                <p className="text-sm text-slate-600 mb-8 max-w-2xl leading-relaxed text-left">
+                  The system outputs deterministic answers only in intervals where the finite window convolution <span className="math-font">Z(u)</span> of <span className="math-font">Λ(n)</span> and its uniform lower bound <span className="math-font">δ<sub>pos</sub></span> are confirmed to be positive. We are detailing the structure of <span className="math-font">δ<sub>pos</sub></span> in a separate project to evoke analogies with reliability design in information systems and physical stability analysis.
+                </p>
+                <div className="flex flex-wrap justify-start gap-4">
+                  <a
+                    href="https://ghostdrifttheory.github.io/prime-counter-demo-en/"
+                    className="px-6 py-2.5 rounded-lg bg-emerald-500 text-white font-bold text-sm hover:bg-emerald-600 transition shadow-lg shadow-emerald-200 inline-block"
+                  >
+                    Project Home
+                  </a>
+                </div>
+              </section>
+            </main>
+            
+            <footer className="max-w-5xl mx-auto px-4 mt-16 pb-8 text-center space-y-2">
+                <div className="text-xs text-slate-500 font-mono">
+                    This demo is designed as part of the GhostDrift Mathematical Research Project.
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono">
+                    &copy; 2025 Prime Calculation OS Project. All rights reserved.
+                </div>
+            </footer>
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App />);
+    </script>
+  </body>
+</html>
