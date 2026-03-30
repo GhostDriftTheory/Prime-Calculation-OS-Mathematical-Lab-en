@@ -10,6 +10,9 @@ This interactive demonstration visualizes the mathematical core of the **Prime C
 
 This project is a foundational implementation of **Responsibility Engineering** within the **GhostDrift Mathematical Framework**.
 
+🌐 GhostDrift Mathematical Institute (Official)
+[https://www.ghostdriftresearch.com/](https://www.ghostdriftresearch.com/)
+
 ## **💡 Why it Matters: AI Accountability**
 
 In the era of Generative AI, the critical challenge for mission-critical systems is not merely "accuracy," but **accountability**—specifically, the system's ability to know **when to refuse to answer**.
